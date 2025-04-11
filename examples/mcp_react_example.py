@@ -3,7 +3,6 @@ import os
 from dspy.clients.mcp import MCPReactAgent
 import dspy
 
-
 lm = dspy.LM(
     "gemini/gemini-2.0-flash",api_key=os.getenv("GOOGLE_API_KEY")  # Will automatically check env vars if not provided
 )

@@ -181,19 +181,13 @@ class MCPReactAgent:
     
     async def setup(self, 
                    command: str, 
-                   args: List[str],
-                   lm: Optional[Union[dspy.LM, str]] = None,
-                   api_key: Optional[str] = None,
-                   lm_model_name: Optional[str] = None):
+                   args: List[str]):
         """
         Set up the MCP environment and create the ReAct agent.
         
         Args:
             command: Command to run the MCP server
             args: Arguments for the command
-            lm: Language model to use (either a dspy.LM instance or model name)
-            api_key: API key for the language model (if needed)
-            lm_model_name: Model name for the language model (if LM not provided)
             
         Returns:
             Self for method chaining
@@ -207,13 +201,14 @@ class MCPReactAgent:
             args=args
         )
         
-        # Configure language model if provided
-        if lm or lm_model_name:
-            self._configure_lm(lm, api_key, lm_model_name)
-            
-        # Connect to the MCP server
-        self._read, self._write = await stdio_client(server_params).__aenter__()
-        self.session = await ClientSession(self._read, self._write).__aenter__()
+        # Store the context managers rather than their results
+        self._stdio_context = stdio_client(server_params)
+        # Connect to the MCP server using proper context handling
+        self._read, self._write = await self._stdio_context.__aenter__()
+        
+        # Create session as a context manager and store it
+        self._session_context = ClientSession(self._read, self._write)
+        self.session = await self._session_context.__aenter__()
         
         # Initialize the connection
         await self.session.initialize()
@@ -226,28 +221,6 @@ class MCPReactAgent:
         )
         
         return self
-    
-    def _configure_lm(self, lm, api_key, lm_model_name):
-        """Configure the language model for DSPy."""
-        if isinstance(lm, dspy.LM):
-            # If we're given a configured LM instance, use it directly
-            dspy.configure(lm=lm)
-        else:
-            # If we're given a model name or need to use the provided model name
-            model_name = lm if isinstance(lm, str) else lm_model_name
-            
-            # Handle API key - use provided or check environment
-            if not api_key:
-                # Try common environment variables for API keys
-                for env_var in ["OPENAI_API_KEY", "GOOGLE_API_KEY", "ANTHROPIC_API_KEY"]:
-                    api_key = os.getenv(env_var)
-                    if api_key:
-                        break
-                        
-            # Configure DSPy with the model
-            if model_name and api_key:
-                configured_lm = dspy.LM(model_name, api_key=api_key)
-                dspy.configure(lm=configured_lm)
     
     async def run(self, request: str):
         """
@@ -273,19 +246,17 @@ class MCPReactAgent:
     
     async def cleanup(self):
         """Clean up resources."""
-        if self.session:
-            await self.session.__aexit__(None, None, None)
+        if hasattr(self, '_session_context') and self._session_context:
+            await self._session_context.__aexit__(None, None, None)
             self.session = None
             
-        if self._read and self._write:
-            # Close stdio client
-            from mcp.client.stdio import stdio_client
-            await stdio_client.__aexit__(None, None, None)
+        if hasattr(self, '_stdio_context') and self._stdio_context:
+            await self._stdio_context.__aexit__(None, None, None)
             self._read = None
             self._write = None
-            
-        # Additional cleanup
-        await cleanup_session()
+        
+        # Additional cleanup with a slightly longer wait to ensure all tasks complete
+        await asyncio.sleep(0.2)
 
 
 async def create_mcp_react(session, signature, max_iters=5):
