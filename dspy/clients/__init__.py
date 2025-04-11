@@ -2,6 +2,7 @@ from dspy.clients.lm import LM
 from dspy.clients.provider import Provider, TrainingJob
 from dspy.clients.base_lm import BaseLM, inspect_history
 from dspy.clients.embedding import Embedder
+from dspy.clients.mcp import MCPClient, MCPTool, create_mcp_react, map_json_schema_to_tool_args
 import litellm
 import os
 from pathlib import Path
@@ -61,4 +62,8 @@ __all__ = [
     "Embedder",
     "enable_litellm_logging",
     "disable_litellm_logging",
+    "MCPClient",
+    "MCPTool",
+    "create_mcp_react",
+    "map_json_schema_to_tool_args",
 ]
