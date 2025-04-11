@@ -1,63 +1,51 @@
 import asyncio
-import dspy
 import os
-from mcp.client.stdio import stdio_client
-from mcp import ClientSession, StdioServerParameters
-
-from dspy.clients.mcp import create_mcp_react ,cleanup_session
+from dspy.clients.mcp import MCPReactAgent
+import dspy
 
 
-# Define a simple ReAct signature for our task
-class FileManipulationSignature(dspy.Signature):
-    """Perform file operations using MCP tools."""
-    
+lm = dspy.LM(
+    "gemini/gemini-2.0-flash",api_key=os.getenv("GOOGLE_API_KEY")  # Will automatically check env vars if not provided
+)
+dspy.configure(lm=lm)
+
+class DefaultMCPSignature(dspy.Signature):
+    """Perform operations using MCP tools."""
     request = dspy.InputField(desc="The user's request")
     output = dspy.OutputField(desc="The final response to the user")
 
-
 async def main():
-    # Create server parameters for stdio connection
-    # Adjust this based on your MCP server setup
-    server_params = StdioServerParameters(
-          command='npx', # Command to run the server
-          args=["-y",    # Arguments for the command
-                "@modelcontextprotocol/server-filesystem",
-                # IMPORTANT! This is the absolute path to the allowed directory
-                r"F:\AI\DSPy_MCP\test"],
-      )
+    """
+    Demonstrate the improved MCP React agent.
+    """
+    # Create an MCP React agent with default signature
+    # You can also provide your own custom signature if needed
 
-    # Set up DSPy with your preferred LLM
-    # Make sure GOOGLE_API_KEY is set in your environment
-    api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key:
-        raise ValueError("GOOGLE_API_KEY environment variable not set")
-    lm = dspy.LM("gemini/gemini-2.0-flash", api_key=api_key) 
-    dspy.configure(lm=lm)
-
-    async with stdio_client(server_params) as (read, write):
-        async with ClientSession(read, write) as session:
-            # Initialize the connection
-            await session.initialize()
+    agent = MCPReactAgent(DefaultMCPSignature,max_iters=10)
+    
+    # Set up the agent with one simple call
+    # This handles server setup, LM configuration, and agent creation
+    await agent.setup(
+        command='npx',
+        args=["-y", "@modelcontextprotocol/server-filesystem", r"F:\AI\DSPy_MCP\test"],
+    )
+    
+    # The agent can be used as a context manager for automatic cleanup
+    async with agent:
+        # Run the agent with a request
+        result = await agent.run("Create a file called 'test.txt' and write 'Hello World' to it")
+        
+        # Print the result
+        print("\nReAct execution result:")
+        print(f"Output: {result.output}")
+        
+        # Show trajectory information if available
+        if hasattr(result, 'trajectory') and result.trajectory:
+            print(f"\nTrajectory steps: {len(result.trajectory) // 4}")  # Each step has 4 entries
             
-            # Create a ReAct agent with MCP tools
-            react_agent = await create_mcp_react(
-                session, 
-                FileManipulationSignature,
-                max_iters=10
-            )
-            
-            # Use the ReAct agent
-            result = await react_agent.async_forward(
-                request="Create a file called 'test.txt' and write 'Hello World' to it"
-            )
-            
-            print("ReAct execution result:")
-            print(f"Output: {result.output}")
-            
-            # Check if trajectory exists before trying to access its length
-            if hasattr(result, 'trajectory') and result.trajectory:
-                print(f"Trajectory steps: {len(result.trajectory) // 4}")  # Each step has 4 entries
-                # If you want to inspect the full trajectory
+            # Print a detailed trajectory if requested
+            print_detailed = True  # Set to False to hide detailed trajectory
+            if print_detailed:
                 print("\nDetailed trajectory:")
                 for i in range(len(result.trajectory) // 4):
                     print(f"Step {i+1}:")
@@ -66,15 +54,9 @@ async def main():
                     print(f"  Args: {result.trajectory.get(f'tool_args_{i}')}")
                     print(f"  Observation: {result.trajectory.get(f'observation_{i}')}")
                     print()
-            else:
-                 print("\nNo trajectory generated or trajectory is empty.")
-
-
-
-    await cleanup_session()
+        else:
+            print("\nNo trajectory generated or trajectory is empty.")
+    
 
 if __name__ == "__main__":
-    # Ensure you load environment variables if using a .env file
-    # from dotenv import load_dotenv
-    # load_dotenv() 
     asyncio.run(main())

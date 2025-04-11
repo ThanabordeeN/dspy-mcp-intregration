@@ -6,7 +6,8 @@ This module provides utilities for integrating MCP tools with DSPy.
 import inspect
 import asyncio
 import json
-from typing import Any, Dict, List, Optional, Callable
+import os
+from typing import Any, Dict, List, Optional, Callable, Type, Union
 
 import dspy
 from dspy.primitives.tool import Tool
@@ -154,6 +155,138 @@ class MCPClient:
         return [MCPTool(self.session, tool) for tool in tools]
 
 
+class MCPReactAgent:
+    """
+    A simplified wrapper for using MCP with ReAct in DSPy.
+    
+    This class provides a more user-friendly interface for creating and using
+    MCP-powered ReAct agents with less boilerplate code.
+    """
+    
+    def __init__(self, signature = None, max_iters: int = 10):
+        """
+        Initialize an MCP ReAct agent.
+        
+        Args:
+            signature: The signature class for the ReAct module. If None, a default signature will be used.
+            max_iters: Maximum number of iterations for ReAct reasoning
+        """
+        self.signature = signature 
+        self.max_iters = max_iters
+        self.react_agent = None
+        self.session = None
+        self._read = None
+        self._write = None
+        
+    
+    async def setup(self, 
+                   command: str, 
+                   args: List[str],
+                   lm: Optional[Union[dspy.LM, str]] = None,
+                   api_key: Optional[str] = None,
+                   lm_model_name: Optional[str] = None):
+        """
+        Set up the MCP environment and create the ReAct agent.
+        
+        Args:
+            command: Command to run the MCP server
+            args: Arguments for the command
+            lm: Language model to use (either a dspy.LM instance or model name)
+            api_key: API key for the language model (if needed)
+            lm_model_name: Model name for the language model (if LM not provided)
+            
+        Returns:
+            Self for method chaining
+        """
+        from mcp.client.stdio import stdio_client
+        from mcp import ClientSession, StdioServerParameters
+        
+        # Set up the server parameters
+        server_params = StdioServerParameters(
+            command=command,
+            args=args
+        )
+        
+        # Configure language model if provided
+        if lm or lm_model_name:
+            self._configure_lm(lm, api_key, lm_model_name)
+            
+        # Connect to the MCP server
+        self._read, self._write = await stdio_client(server_params).__aenter__()
+        self.session = await ClientSession(self._read, self._write).__aenter__()
+        
+        # Initialize the connection
+        await self.session.initialize()
+        
+        # Create the ReAct agent
+        self.react_agent = await create_mcp_react(
+            self.session, 
+            self.signature,
+            max_iters=self.max_iters
+        )
+        
+        return self
+    
+    def _configure_lm(self, lm, api_key, lm_model_name):
+        """Configure the language model for DSPy."""
+        if isinstance(lm, dspy.LM):
+            # If we're given a configured LM instance, use it directly
+            dspy.configure(lm=lm)
+        else:
+            # If we're given a model name or need to use the provided model name
+            model_name = lm if isinstance(lm, str) else lm_model_name
+            
+            # Handle API key - use provided or check environment
+            if not api_key:
+                # Try common environment variables for API keys
+                for env_var in ["OPENAI_API_KEY", "GOOGLE_API_KEY", "ANTHROPIC_API_KEY"]:
+                    api_key = os.getenv(env_var)
+                    if api_key:
+                        break
+                        
+            # Configure DSPy with the model
+            if model_name and api_key:
+                configured_lm = dspy.LM(model_name, api_key=api_key)
+                dspy.configure(lm=configured_lm)
+    
+    async def run(self, request: str):
+        """
+        Run the ReAct agent with the specified request.
+        
+        Args:
+            request: The user's request to process
+            
+        Returns:
+            The ReAct agent's response
+        """
+        if not self.react_agent:
+            raise ValueError("The agent has not been set up. Call setup() first.")
+            
+        return await self.react_agent.async_forward(request=request)
+    
+    # Support context manager protocol for automatic cleanup
+    async def __aenter__(self):
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.cleanup()
+    
+    async def cleanup(self):
+        """Clean up resources."""
+        if self.session:
+            await self.session.__aexit__(None, None, None)
+            self.session = None
+            
+        if self._read and self._write:
+            # Close stdio client
+            from mcp.client.stdio import stdio_client
+            await stdio_client.__aexit__(None, None, None)
+            self._read = None
+            self._write = None
+            
+        # Additional cleanup
+        await cleanup_session()
+
 
 async def create_mcp_react(session, signature, max_iters=5):
     """
@@ -170,6 +303,7 @@ async def create_mcp_react(session, signature, max_iters=5):
     client = MCPClient(session)
     tools = await client.get_dspy_tools()
     return dspy.ReAct(signature, tools, max_iters=max_iters)
+
 
 async def cleanup_session():
     """Clean up resources"""
