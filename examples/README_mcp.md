@@ -1,138 +1,138 @@
-# MCP Integration with DSPy ReAct
-
-This document explains how to use the Model Context Protocol (MCP) with DSPy's ReAct framework.
+# DSPy Model Context Protocol (MCP) Guide
 
 ## Overview
 
-The integration enables you to use tools provided by MCP servers within DSPy's ReAct framework. The key features include:
+The Model Context Protocol (MCP) is a flexible interface that allows DSPy to connect with external tools and services through a standardized protocol. This README provides guidance on how to use MCP with DSPy, particularly focusing on multi-server configurations.
 
-1. **Async Support**: ReAct now has an `async_forward` method that can handle async tools
-2. **Automatic Tool Integration**: Tools from an MCP server are automatically converted into DSPy Tool objects
-3. **Seamless Integration**: Works with both synchronous and asynchronous contexts
+## Multi-Server Example
 
-## How It Works
+The `mcp_multi_server_example.py` script demonstrates how to use DSPy with multiple MCP servers simultaneously. This allows you to leverage tools from different servers in a single DSPy application.
 
-The integration consists of three main components:
+### Prerequisites
 
-1. **Modified ReAct Class**: Adds async support to the ReAct class
-2. **MCP Client Integration**: Provides utilities for working with MCP sessions
-3. **MCP Tool Wrapper**: Wraps MCP tools so they can be used with DSPy
+- Python 3.8+
+- DSPy installed
+- Access to MCP-compatible services or local servers
+- Proper API keys (if connecting to external LLM providers)
 
-## Usage
+### Configuration
 
-### 1. Import Required Modules
+The multi-server example uses a JSON configuration file (`servers_config.json`) to define MCP server connections. Example structure:
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "F:/AI/DSPy_MCP/test"
+      ]
+    },
+    "airbnb": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@openbnb/mcp-server-airbnb",
+        "--ignore-robots-txt"
+      ]
+    }
+  }
+}
+```
+
+or 
+
+```python
+config = {
+        "mcpServers": {
+            "filesystem": {
+            "command": "npx",
+            "args": [
+                "-y",
+                "@modelcontextprotocol/server-filesystem",
+                "F:/AI/DSPy_MCP/test"
+            ]
+            },
+            "airbnb": {
+            "command": "npx",
+            "args": [
+                "-y",
+                "@openbnb/mcp-server-airbnb",
+                "--ignore-robots-txt"
+            ]
+            }
+        }
+}
+```
+
+### Key Components
+
+The example demonstrates:
+
+1. **Server Management**: Using `MCPServerManager` to initialize and manage multiple MCP servers
+2. **Tool Discovery**: Retrieving tools from all connected servers
+3. **ReAct Agent**: Using DSPy's ReAct framework with MCP tools
+4. **Async Execution**: Handling asynchronous operations with MCP servers
+
+### Example Usage
 
 ```python
 import asyncio
+import os
 import dspy
-from model_context_protocol.client import stdio_client, StdioServerParameters
-from dspy.clients.mcp import create_mcp_react
-```
 
-### 2. Define a ReAct Signature
+# Define a simple DSPy Signature for the agent
+class MultiServerSignature(dspy.Signature):
+    """Perform operations using tools potentially available across multiple MCP servers."""
+    request: str = dspy.InputField(desc="The user's request, potentially requiring external tools.")
+    output: str = dspy.OutputField(desc="The final response to the user's request after potentially using tools.")
 
-```python
-class FileManipulationSignature(dspy.Signature):
-    """Perform file operations using MCP tools."""
+async def main():
+    # Initialize language model
+    lm = dspy.LM("gemini/gemini-2.0-flash", api_key=os.getenv("GOOGLE_API_KEY"))
+    dspy.configure(lm=lm)
     
-    request = dspy.InputField(desc="The user's request")
-    output = dspy.OutputField(desc="The final response to the user")
-```
-
-### 3. Set Up MCP and Create a ReAct Agent
-
-```python
-# Set up MCP server parameters
-server_params = StdioServerParameters(
-    command="docker",
-    args=[
-        "run",
-        "-i",
-        "--rm",
-        "--mount",
-        "type=bind,src=/path/to/workspace,dst=/projects/workspace",
-        "mcp/filesystem",
-        "/projects",
-    ],
-)
-
-# Connect to MCP server
-async with stdio_client(server_params) as (read, write):
-    from model_context_protocol.client.session import ClientSession
+    # Configure MCP servers
+    config_path = "path/to/servers_config.json"
     
-    async with ClientSession(read, write) as session:
-        # Initialize the connection
-        await session.initialize()
+    async with dspy.MCPServerManager() as server_manager:
+        # Load and initialize servers from config
+        config = server_manager.load_config(config_path)
+        await server_manager.initialize_servers(config)
         
-        # Create a ReAct agent with MCP tools
-        react_agent = await create_mcp_react(
-            session, 
-            FileManipulationSignature,
-            max_iters=10
+        # Get all tools from all connected servers
+        all_mcp_tools = await server_manager.get_all_tools()
+        
+        # Create a ReAct agent with the tools
+        react_agent = dspy.ReAct(
+            MultiServerSignature,
+            tools=all_mcp_tools,
+            max_iters=7
         )
-```
+        
+        # Execute a request
+        result = await react_agent.async_forward(request="Your request here")
+        print("Final Result:", result.output)
 
-### 4. Use the ReAct Agent
-
-```python
-# Use the ReAct agent asynchronously
-result = await react_agent.async_forward(
-    request="Create a file called 'test.txt' and write 'Hello World' to it"
-)
-
-# Print the result
-print(f"Output: {result.output}")
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
 ## Advanced Usage
 
-### Creating Individual MCP Tools
+- **Tool Selection**: You can filter tools by server or capability
+- **Error Handling**: Implement retry logic for server connection issues
+- **Authentication**: Configure different authentication methods per server
 
-If you want to create individual tools from MCP:
+## Troubleshooting
 
-```python
-from dspy.clients.mcp import MCPClient, MCPTool
+- Ensure all servers are running before initializing connections
+- Check that your API keys are correctly set as environment variables
+- Verify server URLs are correct and accessible
 
-async def get_individual_tools(session):
-    client = MCPClient(session)
-    tools = await client.get_dspy_tools()
-    return tools
+## Additional Resources
 
-# Then you can use these tools directly or create a ReAct agent with a subset of tools
-tool_list = await get_individual_tools(session)
-custom_react = dspy.ReAct(FileManipulationSignature, tools=tool_list[:3], max_iters=10)
-```
-
-### Using MCP Tools in Synchronous Code
-
-The integration handles both synchronous and asynchronous contexts. If you call a function that returns a coroutine from a synchronous context, it will automatically run the coroutine in an event loop:
-
-```python
-# This will work even in a synchronous context
-result = react_agent(request="List all files in the directory")
-```
-
-## Common Issues and Solutions
-
-### Issue: "RuntimeError: Event loop is already running"
-
-**Solution**: If you're in a Jupyter notebook or another environment where an event loop is already running, use:
-
-```python
-import nest_asyncio
-nest_asyncio.apply()
-```
-
-### Issue: Tools not working as expected
-
-**Solution**: Make sure the MCP server is properly configured and accessible. You can test individual tools before using them with ReAct:
-
-```python
-# Test a tool directly
-tool_result = await session.call_tool("list_directory", arguments={"path": "/projects"})
-print(tool_result)
-```
-
-## Complete Example
-
-See the full example in [`mcp_react_example.py`](mcp_react_example.py) for a working demonstration.
+- [DSPy Documentation](https://dspy.ai/)
+- [MCP Specification](https://github.com/modelcontextprotocol)
