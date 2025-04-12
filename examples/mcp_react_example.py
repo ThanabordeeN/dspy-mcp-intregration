@@ -3,21 +3,18 @@ import dspy
 import os
 from mcp.client.stdio import stdio_client
 from mcp import ClientSession, StdioServerParameters
-
 from dspy.clients.mcp import create_mcp_react ,cleanup_session
 
+lm = dspy.LM("gemini/gemini-2.0-flash", api_key=os.getenv("GEMINI_API_KEY")) 
+dspy.configure(lm=lm)
 
 # Define a simple ReAct signature for our task
 class FileManipulationSignature(dspy.Signature):
     """Perform file operations using MCP tools."""
-    
     request = dspy.InputField(desc="The user's request")
     output = dspy.OutputField(desc="The final response to the user")
 
-
 async def main():
-    # Create server parameters for stdio connection
-    # Adjust this based on your MCP server setup
     server_params = StdioServerParameters(
           command='npx', # Command to run the server
           args=["-y",    # Arguments for the command
@@ -25,31 +22,17 @@ async def main():
                 # IMPORTANT! This is the absolute path to the allowed directory
                 r"F:\AI\DSPy_MCP\test"],
       )
-
-    # Set up DSPy with your preferred LLM
-    # Make sure GOOGLE_API_KEY is set in your environment
-    api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key:
-        raise ValueError("GOOGLE_API_KEY environment variable not set")
-    lm = dspy.LM("gemini/gemini-2.0-flash", api_key=api_key) 
-    dspy.configure(lm=lm)
-
     async with stdio_client(server_params) as (read, write):
         async with ClientSession(read, write) as session:
             # Initialize the connection
             await session.initialize()
-            
             # Create a ReAct agent with MCP tools
             react_agent = await create_mcp_react(
                 session, 
                 FileManipulationSignature,
-                max_iters=10
-            )
-            
+                max_iters=10)
             # Use the ReAct agent
-            result = await react_agent.async_forward(
-                request="Create a file called 'test.txt' and write 'Hello World' to it"
-            )
+            result = await react_agent.async_forward(request="Create a file called 'test.txt' and write 'Hello World' to it")
             
             print("ReAct execution result:")
             print(f"Output: {result.output}")
@@ -68,13 +51,7 @@ async def main():
                     print()
             else:
                  print("\nNo trajectory generated or trajectory is empty.")
-
-
-
     await cleanup_session()
 
 if __name__ == "__main__":
-    # Ensure you load environment variables if using a .env file
-    # from dotenv import load_dotenv
-    # load_dotenv() 
     asyncio.run(main())
