@@ -9,11 +9,9 @@ This example shows how to:
 """
 
 import asyncio
-import json
 import logging
 import os
 import sys
-from typing import Any, Dict, List
 
 # Add the parent directory to sys.path to import dspy
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -34,15 +32,12 @@ async def main() -> None:
     """Initialize and run a demo with multiple MCP servers."""
     # Set up the language model
     api_key = os.getenv("GOOGLE_API_KEY")  # Default variable name for Google API key
-    if not api_key:
-        logging.error("Please set the OPENAI_API_KEY environment variable")
-        return
         
     lm = dspy.LM(model="gemini/gemini-2.0-flash", api_key=api_key)
     dspy.configure(lm=lm)
     
     # Create a sample configuration file if it doesn't exist
-    config_path = "servers_config.json"
+    config_path = "F:\AI\DSPy_MCP\dspy_dev\examples\servers_config.json"
     
     # Initialize the MCP server manager
     server_manager = MCPServerManager()
