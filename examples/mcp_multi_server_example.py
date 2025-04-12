@@ -13,7 +13,7 @@ import asyncio
 import os
 import dspy
 # Import from the correct location within your dspy structure
-from dspy.clients.mcp_resources import MCPServerManager # Assuming it's here
+import dspy.clients
 
 # Define a simple DSPy Signature
 class MultiServerSignature(dspy.Signature):
@@ -34,7 +34,7 @@ async def main() -> None:
     config_path = r"F:\AI\DSPy_MCP\dspy_dev\examples\servers_config.json" # Assumes config is in the same directory
 
 
-    async with MCPServerManager() as server_manager:
+    async with dspy.MCPServerManager() as server_manager:
 
         config = server_manager.load_config(config_path)
 
@@ -48,12 +48,10 @@ async def main() -> None:
             max_iters=7 # Limit the number of steps
         )
 
-
-        request = "write a python script to get the current weather in New York City"
+        request = "Search hotel in airbnb in bangkok at 15/04/2025 and summary the result in markdown format file"
 
         result = await react_agent.async_forward(request=request)
         print("Final Result:", result.output)
 
 if __name__ == "__main__":
-
     asyncio.run(main())

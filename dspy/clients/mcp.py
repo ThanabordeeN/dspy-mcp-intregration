@@ -13,6 +13,9 @@ import os
 import shutil
 from contextlib import AsyncExitStack
 from typing import Any, Dict, List, Optional, Tuple, Type
+import sys
+from pathlib import Path
+from datetime import datetime
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -21,11 +24,93 @@ from mcp.client.stdio import stdio_client
 from dspy.primitives.tool import Tool
 
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+# Configure logging with more control
+def setup_logging(log_level=logging.INFO, log_to_file=False, log_dir=None):
+    """Configure logging with optional file output and cleanup."""
+    # Create formatter
+    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    
+    # Setup root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(log_level)
+    
+    # Clear existing handlers
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+    
+    # Console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(formatter)
+    console_handler.setLevel(log_level)
+    root_logger.addHandler(console_handler)
+    
+    # File handler (optional)
+    if log_to_file:
+        if not log_dir:
+            log_dir = Path.home() / "dspy_logs"
+        else:
+            log_dir = Path(log_dir)
+            
+        # Create log directory if it doesn't exist
+        log_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Clean old log files (keep last 10)
+        clean_old_logs(log_dir)
+        
+        # Create new log file with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_file = log_dir / f"dspy_mcp_{timestamp}.log"
+        
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setFormatter(formatter)
+        file_handler.setLevel(log_level)
+        root_logger.addHandler(file_handler)
+        
+    return root_logger
+
+def clean_old_logs(log_dir, keep_last=10):
+    """Clean old log files, keeping only the specified number of latest files."""
+    log_files = list(log_dir.glob("dspy_mcp_*.log"))
+    if len(log_files) > keep_last:
+        # Sort by modification time (oldest first)
+        log_files.sort(key=lambda f: f.stat().st_mtime)
+        # Delete oldest files
+        for f in log_files[:-keep_last]:
+            try:
+                f.unlink()
+            except (PermissionError, OSError):
+                pass  # Skip if file is locked or cannot be deleted
+
+def disable_logging():
+    """Completely disable all logging from the MCP module.
+    
+    This function sets the logger level to CRITICAL+1 to effectively silence
+    all log messages, and removes any existing handlers.
+    """
+    import logging
+    # Get the logger
+    mcp_logger = logging.getLogger("dspy.mcp")
+    
+    # Remove all existing handlers
+    for handler in mcp_logger.handlers[:]:
+        mcp_logger.removeHandler(handler)
+    
+    # Set level higher than CRITICAL to silence all messages
+    mcp_logger.setLevel(logging.CRITICAL + 1)
+    
+    # Also handle the root logger to be sure
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.CRITICAL + 1)
+    
+    # Add a null handler to prevent "No handler found" warnings
+    mcp_logger.addHandler(logging.NullHandler())
+    
+    return mcp_logger
+
+# Modified logger initialization to allow disabling
 logger = logging.getLogger("dspy.mcp")
+# Default setup - can be modified by calling setup_logging() later
+setup_logging(log_level=logging.INFO)
 
 
 def map_json_schema_to_tool_args(
@@ -454,6 +539,8 @@ class MCPServerManager:
         """Initialize the MCP server manager."""
         self.servers: Dict[str, Server] = {}
         # No internal exit stack needed here, each Server manages its own.
+        disable_logging() # Disable logging by default, can be enabled later if needed
+
         logger.info("MCPServerManager initialized.")
 
     @staticmethod
