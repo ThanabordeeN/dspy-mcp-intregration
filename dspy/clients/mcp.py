@@ -160,7 +160,9 @@ class MCPReactAgent:
     A simplified wrapper for using MCP with ReAct in DSPy.
     
     This class provides a more user-friendly interface for creating and using
-    MCP-powered ReAct agents with less boilerplate code.
+    MCP-powered ReAct agents with less boilerplate code. It can handle multiple
+    MCP server sessions, allowing you to interact with different MCP servers
+    simultaneously with a unified interface.
     """
     
     def __init__(self, signature = None, max_iters: int = 10):
@@ -173,25 +175,85 @@ class MCPReactAgent:
         """
         self.signature = signature 
         self.max_iters = max_iters
-        self.react_agent = None
-        self.session = None
-        self._read = None
-        self._write = None
         
+        # Dictionary to store multiple sessions
+        self.sessions = {}
+        self.active_session_id = None
+        
+        # Store all tools from all sessions
+        self.all_tools = []
+        self.tool_to_session = {}  # Maps tool name to session ID
+        
+        # Master react agent that uses all tools
+        self.master_agent = None
     
-    async def setup(self, 
-                   command: str, 
-                   args: List[str],
-                   env: Optional[Dict[str, str]] = None):
+    async def setup(self, server_configs=None, **kwargs):
         """
-        Set up the MCP environment and create the ReAct agent.
+        Set up one or multiple MCP environments and create a unified ReAct agent.
+        
+        Args:
+            server_configs: List of server configuration dictionaries, each containing:
+                - command: Command to run the MCP server
+                - args: Arguments for the command
+                - session_id: Identifier for this session
+                - env: (Optional) Environment variables for the process
+            **kwargs: If server_configs is None, these are used for a single setup:
+                - command: Command to run the MCP server
+                - args: Arguments for the command
+                - session_id: (Optional) Identifier for this session (default: "default")
+                - env: (Optional) Environment variables for the process
+                
+        Returns:
+            Self for method chaining
+        """
+        from mcp.client.stdio import stdio_client
+        from mcp import ClientSession, StdioServerParameters
+        
+        # Handle both single setup and multiple setup cases
+        if server_configs is None:
+            # Single setup using kwargs
+            command = kwargs.get('command')
+            args = kwargs.get('args')
+            session_id = kwargs.get('session_id', 'default')
+            env = kwargs.get('env')
+            
+            if command is None or args is None:
+                raise ValueError("For single setup, both 'command' and 'args' are required")
+                
+            await self._setup_single_session(command, args, session_id, env)
+        else:
+            # Multiple setup using server_configs list
+            if not isinstance(server_configs, list):
+                raise ValueError("server_configs must be a list of server configuration dictionaries")
+                
+            for config in server_configs:
+                command = config.get('command')
+                args = config.get('args')
+                session_id = config.get('session_id', f"session_{len(self.sessions)}")
+                env = config.get('env')
+                
+                if command is None or args is None:
+                    raise ValueError(f"For config {session_id}, both 'command' and 'args' are required")
+                    
+                await self._setup_single_session(command, args, session_id, env)
+        
+        # After all sessions are set up, create a master agent with all tools
+        await self._create_master_agent()
+                
+        return self
+    
+    async def _setup_single_session(self, command, args, session_id="default", env=None):
+        """
+        Set up a single MCP environment and create a ReAct agent.
         
         Args:
             command: Command to run the MCP server
             args: Arguments for the command
+            session_id: Identifier for this session (default: "default")
+            env: Optional environment variables for the process
             
         Returns:
-            Self for method chaining
+            Session container dictionary
         """
         from mcp.client.stdio import stdio_client
         from mcp import ClientSession, StdioServerParameters
@@ -203,30 +265,93 @@ class MCPReactAgent:
             env=env,
         )
         
+        # Create a session container
+        session_container = {}
+        
         # Store the context managers rather than their results
-        self._stdio_context = stdio_client(server_params)
+        session_container["stdio_context"] = stdio_client(server_params)
         # Connect to the MCP server using proper context handling
-        self._read, self._write = await self._stdio_context.__aenter__()
+        session_container["read"], session_container["write"] = await session_container["stdio_context"].__aenter__()
         
         # Create session as a context manager and store it
-        self._session_context = ClientSession(self._read, self._write)
-        self.session = await self._session_context.__aenter__()
+        session_container["session_context"] = ClientSession(session_container["read"], session_container["write"])
+        session_container["session"] = await session_container["session_context"].__aenter__()
         
         # Initialize the connection
-        await self.session.initialize()
+        await session_container["session"].initialize()
         
-        # Create the ReAct agent
-        self.react_agent = await create_mcp_react(
-            self.session, 
+        # Get tools for this session and track them
+        client = MCPClient(session_container["session"])
+        tools = await client.get_dspy_tools()
+        session_container["tools"] = tools
+        
+        # Create a session-specific React agent
+        session_container["react_agent"] = await create_mcp_react(
+            session_container["session"], 
             self.signature,
             max_iters=self.max_iters
         )
         
-        return self
+        # Store this session
+        self.sessions[session_id] = session_container
+        
+        # Map each tool to its session
+        for tool in tools:
+            # Store the original tool function
+            original_func = tool.func
+            tool_name = tool.name
+            
+            # Map tool to session
+            self.tool_to_session[tool_name] = session_id
+            
+        # Set as active session if it's the first one or explicitly requested
+        if self.active_session_id is None:
+            self.active_session_id = session_id
+        
+        return session_container
+    
+    async def _create_master_agent(self):
+        """
+        Create a master ReAct agent that has access to all tools across all sessions.
+        """
+        if not self.sessions:
+            raise ValueError("No sessions have been set up yet. Call setup() first.")
+        
+        # Collect all tools from all sessions
+        all_tools = []
+        for session_id, session_container in self.sessions.items():
+            all_tools.extend(session_container["tools"])
+            
+        # Save all tools for reference
+        self.all_tools = all_tools
+        
+        # Create a new master ReAct agent with all tools
+        self.master_agent = dspy.ReAct(self.signature, all_tools, max_iters=self.max_iters)
+    
+    def set_active_session(self, session_id: str):
+        """
+        Set the active session by its identifier.
+        
+        Args:
+            session_id: Identifier of the session to set as active
+        """
+        if session_id not in self.sessions:
+            raise ValueError(f"Session ID '{session_id}' does not exist")
+        self.active_session_id = session_id
+    
+    def get_session_ids(self) -> List[str]:
+        """
+        Get a list of all session identifiers.
+        
+        Returns:
+            List of session IDs
+        """
+        return list(self.sessions.keys())
     
     async def run(self, request: str):
         """
-        Run the ReAct agent with the specified request.
+        Run the master ReAct agent with the specified request.
+        This automatically routes tool calls to the appropriate sessions.
         
         Args:
             request: The user's request to process
@@ -234,10 +359,10 @@ class MCPReactAgent:
         Returns:
             The ReAct agent's response
         """
-        if not self.react_agent:
+        if not self.master_agent:
             raise ValueError("The agent has not been set up. Call setup() first.")
             
-        return await self.react_agent.async_forward(request=request)
+        return await self.master_agent.async_forward(request=request)
     
     # Support context manager protocol for automatic cleanup
     async def __aenter__(self):
@@ -246,19 +371,69 @@ class MCPReactAgent:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.cleanup()
     
-    async def cleanup(self):
-        """Clean up resources."""
-        if hasattr(self, '_session_context') and self._session_context:
-            await self._session_context.__aexit__(None, None, None)
-            self.session = None
-            
-        if hasattr(self, '_stdio_context') and self._stdio_context:
-            await self._stdio_context.__aexit__(None, None, None)
-            self._read = None
-            self._write = None
+    async def cleanup(self, session_id: Optional[str] = None):
+        """
+        Clean up resources for one or all sessions.
         
-        # Additional cleanup with a slightly longer wait to ensure all tasks complete
-        await asyncio.sleep(0.2)
+        Args:
+            session_id: (Optional) Identifier of the session to clean up. If None, all sessions are cleaned up.
+        """
+        try:
+            if session_id is None:
+                # Clean up all sessions
+                session_ids = list(self.sessions.keys())
+                for sid in session_ids:
+                    try:
+                        await self._cleanup_single_session(sid)
+                    except Exception as e:
+                        print(f"Error cleaning up session {sid}: {e}")
+                
+                # Reset tool mappings and master agent
+                self.tool_to_session = {}
+                self.all_tools = []
+                self.master_agent = None
+                self.sessions = {}
+            else:
+                # Clean up a specific session
+                if session_id in self.sessions:
+                    await self._cleanup_single_session(session_id)
+                    self.sessions.pop(session_id, None)
+            
+            # Additional cleanup with a slightly longer wait to ensure all tasks complete
+            await asyncio.sleep(0.2)
+        except Exception as e:
+            print(f"Error during cleanup: {e}")
+    
+    async def _cleanup_single_session(self, session_id: str):
+        """
+        Clean up resources for a single session.
+        
+        Args:
+            session_id: Identifier of the session to clean up
+        """
+        if session_id not in self.sessions:
+            return
+            
+        session_container = self.sessions[session_id]
+        
+        # Cleanup session context first
+        if "session_context" in session_container and session_container["session_context"]:
+            try:
+                await session_container["session_context"].__aexit__(None, None, None)
+            except Exception as e:
+                print(f"Error closing session context: {e}")
+            session_container["session_context"] = None
+            session_container["session"] = None
+        
+        # Then cleanup stdio context
+        if "stdio_context" in session_container and session_container["stdio_context"]:
+            try:
+                await session_container["stdio_context"].__aexit__(None, None, None)
+            except Exception as e:
+                print(f"Error closing stdio context: {e}")
+            session_container["stdio_context"] = None
+            session_container["read"] = None
+            session_container["write"] = None
 
 
 async def create_mcp_react(session, signature, max_iters=5):
@@ -278,6 +453,30 @@ async def create_mcp_react(session, signature, max_iters=5):
     return dspy.ReAct(signature, tools, max_iters=max_iters)
 
 
-async def cleanup_session():
-    """Clean up resources"""
-    await asyncio.sleep(0.1) # Give asyncio loop time to process closures
+async def cleanup_session(session=None, stdio_context=None):
+    """
+    Clean up resources related to MCP server connections.
+    
+    Args:
+        session: An optional MCP session to clean up
+        stdio_context: An optional stdio context to clean up
+    """
+    try:
+        # Close session if provided
+        if session:
+            try:
+                await session.close()
+            except Exception as e:
+                print(f"Error closing MCP session: {e}")
+        
+        # Close stdio context if provided
+        if stdio_context:
+            try:
+                await stdio_context.__aexit__(None, None, None)
+            except Exception as e:
+                print(f"Error closing stdio context: {e}")
+        
+        # Give asyncio loop time to process closures
+        await asyncio.sleep(0.2)
+    except Exception as e:
+        print(f"Error during MCP resource cleanup: {e}")
