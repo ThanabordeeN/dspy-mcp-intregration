@@ -11,9 +11,8 @@ import logging
 import os
 import shutil
 from contextlib import AsyncExitStack
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional
 from dspy.primitives.tool import Tool
-from dspy.clients.mcp import map_json_schema_to_tool_args
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -234,10 +233,17 @@ class Server:
         """Clean up server resources."""
         async with self._cleanup_lock:
             try:
-                await self.exit_stack.aclose()
-                self.session = None
+                if self.exit_stack is not None:
+                    await self.exit_stack.aclose()
+                    # Clear references after closing
+                    self.session = None
+                    # Add a small delay to allow task completion
+                    await asyncio.sleep(0.1)
             except Exception as e:
                 logger.error(f"Error during cleanup of server {self.name}: {e}")
+            finally:
+                # Reset to a fresh exit stack
+                self.exit_stack = AsyncExitStack()
 
 
 class MCPServerManager:
@@ -349,3 +355,27 @@ class MCPServerManager:
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         """Clean up resources when exiting context."""
         await self.cleanup()
+
+def map_json_schema_to_tool_args(schema: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any], Dict[str, str]]:
+    """
+    Maps a JSON schema to tool arguments compatible with DSPy Tool.
+
+    Args:
+        schema: JSON schema describing tool arguments.
+
+    Returns:
+        A tuple of (args, arg_types, arg_desc) for the Tool constructor.
+    """
+    args = {}
+    arg_types = {}
+    arg_desc = {}
+
+    if "properties" in schema:
+        for name, prop in schema["properties"].items():
+            args[name] = prop
+            # We use Any as a fallback type since we don't have precise type information
+            arg_types[name] = Any
+            if "description" in prop:
+                arg_desc[name] = prop["description"]
+
+    return args, arg_types, arg_desc
