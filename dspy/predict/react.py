@@ -74,22 +74,7 @@ class ReAct(Module):
         return adapter.format_user_message_content(trajectory_signature, trajectory)
 
     def forward(self, **input_args):
-        # Check if any of the tools are async
-        has_async_tools = any(inspect.iscoroutinefunction(tool.func) for tool in self.tools.values())
-        
-        if has_async_tools:
-            # If we have async tools, we need to use asyncio to run the async forward method
-            try:
-                # If we're already in an event loop, use ensure_future
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    return asyncio.ensure_future(self.async_forward(**input_args))
-                else:
-                    return loop.run_until_complete(self.async_forward(**input_args))
-            except RuntimeError:
-                # If there is no event loop, create one
-                return asyncio.run(self.async_forward(**input_args))
-        
+        """Synchronous version of forward that supports async tools."""
         # Original synchronous implementation
         trajectory = {}
         for idx in range(self.max_iters):
