@@ -120,11 +120,6 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-## Troubleshooting
-
-- Ensure all servers are running before initializing connections
-- Check that your API keys are correctly set as environment variables
-- Verify server URLs are correct and accessible
 
 ## Additional Resources
 
