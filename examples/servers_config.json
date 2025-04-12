@@ -8,18 +8,12 @@
         "F:/AI/DSPy_MCP/test"
       ]
     },
-    "puppeteer": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-puppeteer"
-      ]
-    },
     "airbnb": {
       "command": "npx",
       "args": [
         "-y",
-        "@openbnb/mcp-server-airbnb"
+        "@openbnb/mcp-server-airbnb",
+        "--ignore-robots-txt"
       ]
     }
   }
