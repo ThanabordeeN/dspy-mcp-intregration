@@ -12,8 +12,6 @@ This example shows how to:
 import asyncio
 import os
 import dspy
-# Import from the correct location within your dspy structure
-import dspy.clients
 
 # Define a simple DSPy Signature
 class MultiServerSignature(dspy.Signature):
