@@ -5,8 +5,6 @@ Clean example of using DSPy MCP with proper resource management
 import asyncio
 import os
 import sys
-from typing import List
-import logging
 import dspy
 
 

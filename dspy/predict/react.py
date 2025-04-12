@@ -1,6 +1,5 @@
 import logging
 import inspect
-import asyncio
 from typing import Any, Callable, Literal, get_origin
 
 from litellm import ContextWindowExceededError
