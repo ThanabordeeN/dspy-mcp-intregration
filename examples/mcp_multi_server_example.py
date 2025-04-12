@@ -27,7 +27,27 @@ async def main() -> None:
     async with dspy.MCPServerManager() as server_manager:
 
         config = server_manager.load_config(config_path)
-
+        #  or
+        # config = {
+        #             "mcpServers": {
+        #                 "filesystem": {
+        #                 "command": "npx",
+        #                 "args": [
+        #                     "-y",
+        #                     "@modelcontextprotocol/server-filesystem",
+        #                     "F:/AI/DSPy_MCP/test"
+        #                 ]
+        #                 },
+        #                 "airbnb": {
+        #                 "command": "npx",
+        #                 "args": [
+        #                     "-y",
+        #                     "@openbnb/mcp-server-airbnb",
+        #                     "--ignore-robots-txt"
+        #                 ]
+        #                 }
+        #             }
+        #         }
         await server_manager.initialize_servers(config)
 
         all_mcp_tools = await server_manager.get_all_tools()
