@@ -120,12 +120,6 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-## Advanced Usage
-
-- **Tool Selection**: You can filter tools by server or capability
-- **Error Handling**: Implement retry logic for server connection issues
-- **Authentication**: Configure different authentication methods per server
-
 ## Troubleshooting
 
 - Ensure all servers are running before initializing connections
