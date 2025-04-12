@@ -3,9 +3,7 @@ import os
 from dspy.clients.mcp import MCPReactAgent
 import dspy
 
-lm = dspy.LM(
-    "gemini/gemini-2.0-flash",api_key=os.getenv("GOOGLE_API_KEY")  # Will automatically check env vars if not provided
-)
+lm = dspy.LM("gemini/gemini-2.0-flash",api_key=os.getenv("GOOGLE_API_KEY") )
 dspy.configure(lm=lm)
 
 class DefaultMCPSignature(dspy.Signature):
@@ -18,11 +16,8 @@ async def main():
     Demonstrate the improved MCP React agent.
     """
     # Create an MCP React agent with default signature
-    # You can also provide your own custom signature if needed
-
     agent = MCPReactAgent(DefaultMCPSignature,max_iters=10)
     
-    # Set up the agent with one simple call
     # This handles server setup, LM configuration, and agent creation
     await agent.setup(
         command='npx',
