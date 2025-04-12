@@ -241,6 +241,14 @@ class Server:
                 if self.exit_stack:
                     logger.info(f"Cleaning up resources for server '{self.name}'...")
                     try:
+                        # First try to properly close session if available
+                        if self.session and hasattr(self.session, 'shutdown') and callable(self.session.shutdown):
+                            try:
+                                await self.session.shutdown()
+                                logger.debug(f"Session for server '{self.name}' shut down.")
+                            except Exception as e:
+                                logger.debug(f"Error shutting down session for server '{self.name}': {e}")
+                        
                         # Use a new event loop and task to ensure context consistency
                         await self.exit_stack.aclose()
                         logger.info(f"Resources for server '{self.name}' cleaned up.")
@@ -265,6 +273,9 @@ class Server:
                         self._is_initialized = False
                         # Create a new stack for potential re-initialization
                         self.exit_stack = AsyncExitStack()
+                        
+                        # Force garbage collection to help clean up lingering references
+                        self._force_gc_cleanup()
                 else:
                      logger.debug(f"Cleanup called for server '{self.name}', but no active exit stack found (already cleaned up or never initialized?).")
 
@@ -284,7 +295,7 @@ class Server:
                     # Look for server commands in command line
                     cmd_line = " ".join(child.cmdline()).lower()
                     if self.name.lower() in cmd_line or (
-                        hasattr(self.config, 'command') and 
+                        'command' in self.config and 
                         self.config['command'].lower() in cmd_line
                     ):
                         try:
@@ -300,12 +311,14 @@ class Server:
             except (ImportError, Exception) as e:
                 logger.debug(f"Could not perform subprocess force cleanup: {e}")
                 
-        # Clear any transport references to help with GC
+    def _force_gc_cleanup(self):
+        """Force garbage collection to clean up lingering references."""
         import gc
         try:
-            gc.collect() 
-        except Exception:
-            pass
+            gc.collect()
+            logger.debug("Garbage collection triggered successfully.")
+        except Exception as e:
+            logger.debug(f"Error during garbage collection: {e}")
 
 
 class MCPTool(Tool):
