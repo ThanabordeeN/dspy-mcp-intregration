@@ -181,7 +181,8 @@ class MCPReactAgent:
     
     async def setup(self, 
                    command: str, 
-                   args: List[str]):
+                   args: List[str],
+                   env: Optional[Dict[str, str]] = None):
         """
         Set up the MCP environment and create the ReAct agent.
         
@@ -198,7 +199,8 @@ class MCPReactAgent:
         # Set up the server parameters
         server_params = StdioServerParameters(
             command=command,
-            args=args
+            args=args,
+            env=env,
         )
         
         # Store the context managers rather than their results
