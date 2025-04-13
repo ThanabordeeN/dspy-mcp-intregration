@@ -195,7 +195,7 @@ class Server:
             if isinstance(item, tuple) and item[0] == "tools":
                 for tool in item[1]:
                     # Create a placeholder function with the tool's name
-                    tool_func = lambda tool_name=tool.name, **kwargs: f"Placeholder for {tool_name}"
+                    tool_func = lambda tool_name=tool.name, **kwargs: f"{tool_name}"
                     # Append the tool with the placeholder function
                     tools.append(
                         Tool(
@@ -237,7 +237,7 @@ class Server:
         while attempt < retries:
             try:
                 logging.info(f"Executing {tool_name}...")
-                result = await self.session.call_tool(tool_name, arguments)
+                result = await self.session.call_tool(tool_name, arguments['kwargs'])
 
                 return result
 
@@ -273,6 +273,7 @@ class MCPTool(Tool):
         self.manager = manager
         self.server_name = server_name
         self._raw_tool_info = tool_info
+
         name, desc, input_schema = self._extract_tool_info(tool_info)
         args, arg_types, arg_desc = map_json_schema_to_tool_args(input_schema)
 
@@ -363,9 +364,9 @@ class MCPTool(Tool):
 
 class MCPServerManager:
     """Manages multiple MCP server connections and DSPy-compatible tools."""
-
-    def __init__(self) -> None:
+    def __init__(self ) -> None:
         self.servers = {}
+
 
     @staticmethod
     def load_config(file_path: str) -> Dict[str, Any]:
@@ -401,13 +402,13 @@ class MCPServerManager:
         
         # Then initialize them sequentially
         for name, server in list(self.servers.items()):
-            try:
-                await server.initialize()
-                server._is_initialized = True
-            except Exception as e:
-                logging.error(f"Failed to initialize server {name}: {e}")
-                await self.cleanup()
-                return
+            # try:
+            await server.initialize()
+            server._is_initialized = True
+            # except Exception as e:
+            #     logging.error(f"Failed to initialize server {name}: {e}")
+            #     await self.cleanup()
+            #     return
         
         logging.info(f"Initialized servers: {list(self.servers.keys())}")
         
@@ -434,12 +435,12 @@ class MCPServerManager:
             # Process tools from this server
             for tool_info in tools_list:
                 mcp_tool_instance = MCPTool(self, server_name, tool_info)
-                all_mcp_tools.append(mcp_tool_instance)
+                all_mcp_tools.append(mcp_tool_instance) 
 
         return all_mcp_tools
 
     async def cleanup(self) -> None:
-        """Clean up resources for all managed server connections."""
+        """Clean up resources for all managed serverconnections."""
         if not self.servers:
             return
         for name, server in self.servers.items():
