@@ -7,7 +7,6 @@ and integrates MCP tools seamlessly into the DSPy framework.
 """
 
 import asyncio
-import gc
 import json
 import logging
 import os
@@ -324,7 +323,7 @@ class MCPTool(Tool):
         try:
             result = await server.execute_tool(self.name, kwargs)
             return self._process_result(result)
-        except Exception as e:
+        except Exception:
             raise
 
     def _get_server(self) -> Server:
@@ -380,9 +379,9 @@ class MCPServerManager:
             with open(file_path, "r") as f:
                 config = json.load(f)
             return config
-        except json.JSONDecodeError as e:
+        except json.JSONDecodeError:
             raise
-        except Exception as e:
+        except Exception:
             raise
 
     async def initialize_servers(self, config: Dict[str, Any]) -> None:
