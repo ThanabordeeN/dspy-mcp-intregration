@@ -1,8 +1,15 @@
 from typing import Any, Dict, List, Optional, Tuple, Type
-import json
 import logging
 import anyio
 from dspy.primitives.tool import Tool
+from mcp.types import (
+    Tool as MCPToolType,
+    ResourceContents,
+    TextResourceContents,
+    TextContent,
+    CallToolResult,
+    CallToolRequestParams
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,11 +55,10 @@ class MCPTool(Tool):
         """
         self.session = session
         self._raw_tool_info = tool_info
-
         name, desc, input_schema = self._extract_tool_info(tool_info)
-        self.name = name
         args, arg_types, arg_desc = map_json_schema_to_tool_args(input_schema)
-
+        
+        self.name = name
         super().__init__(
             func=self.call_tool_async,
             name=name,
@@ -62,38 +68,19 @@ class MCPTool(Tool):
             arg_desc=arg_desc
         )
 
-    def _extract_tool_info(self, tool_info: Any) -> Tuple[str, str, Optional[Dict[str, Any]]]:
+    def _extract_tool_info(self, tool_info: MCPToolType) -> Tuple[str, str, Optional[Dict[str, Any]]]:
         """Extract name, description and input schema from tool info.
         
         Args:
-            tool_info: Tool information in various formats (object, dict, JSON string)
+            tool_info: Tool information in MCPToolType format
             
         Returns:
             A tuple of (name, description, input_schema)
         """
-        # Try object attributes
-        if hasattr(tool_info, 'name') and hasattr(tool_info, 'description'):
-            return (
-                tool_info.name,
-                tool_info.description,
-                getattr(tool_info, 'inputSchema', None)
-            )
-            
-        # Try dict format
-        if isinstance(tool_info, dict):
-            if 'name' in tool_info and 'description' in tool_info:
-                return tool_info['name'], tool_info['description'], tool_info.get('inputSchema')
-        
-        # Try JSON string
-        if isinstance(tool_info, str):
-            try:
-                parsed = json.loads(tool_info)
-                if isinstance(parsed, dict) and 'name' in parsed and 'description' in parsed:
-                    return parsed['name'], parsed['description'], parsed.get('inputSchema')
-            except json.JSONDecodeError:
-                pass
-                
-        return str(tool_info), "No description available.", None
+        if not isinstance(tool_info, MCPToolType):
+            # Default case
+            return str(tool_info), "", None
+        return tool_info.name, tool_info.description or "", tool_info.inputSchema
 
     async def call_tool_async(self, **kwargs: Any) -> Any:
         """Execute the MCP tool asynchronously.
@@ -109,51 +96,55 @@ class MCPTool(Tool):
         """
         try:
             logger.debug(f"Executing MCP tool {self.name} with args: {kwargs}")
-            result = await self.session.call_tool(self.name, kwargs)
+            params = CallToolRequestParams(name=self.name, arguments=kwargs)
+            result = await self.session.call_tool(params.name, params.arguments)
             logger.debug(f"MCP tool {self.name} returned: {result}")
             return self._process_result(result)
+
         except anyio.ClosedResourceError as e:
-            # Special handling for closed resources (common during cleanup)
             logger.error(f"MCP resource closed during {self.name} execution: {str(e)}")
             raise RuntimeError(f"MCP connection closed while executing {self.name}")
         except Exception as e:
             logger.error(f"Error executing MCP tool {self.name}: {str(e)}")
             raise RuntimeError(f"Error executing tool {self.name}: {str(e)}")
 
-    def _process_result(self, result: Any) -> Any:
+    def _process_result(self, result: CallToolResult) -> str:
         """Process the result from tool execution into a format suitable for agents.
         
         Args:
-            result: Raw result from the MCP tool
+            result: Raw result from the MCP tool, typically a CallToolResult
             
         Returns:
             Processed result (typically as a string or structured data)
         """
-        if result is None:
-            return "Tool executed successfully but returned no content."
+        if not isinstance(result, CallToolResult):
+            logger.warning(f"Unexpected result type: {type(result)}")
+            return "Tool executed but returned an unexpected result type"
         
-        # Handle content attribute
-        if hasattr(result, 'content') and result.content:
-            content = result.content
-            if isinstance(content, list):
-                try:
-                    return "\n".join(str(getattr(item, 'text', item)) for item in content if item)
-                except Exception:
-                    pass
-            return str(content)
+        if result.isError:
+            return "Tool executed but returned an error"
+        
+        content = result.content if hasattr(result, 'content') else []
+        if isinstance(content, list):
+            try:
+                texts = []
+                for item in content:
+                    if item is None:
+                        continue
+                    if isinstance(item, TextContent):
+                        texts.append(item.text)
+                    elif isinstance(item, ResourceContents):
+                        if isinstance(item, TextResourceContents):
+                            texts.append(item.text)
+                        else:
+                            texts.append(str(item))
+                    else:
+                        texts.append(str(item))
+                return "\n".join(texts)
+            except Exception as e:
+                logger.warning(f"Error processing result content: {e}")
+        return "Execution successful but no content returned"
             
-        # Handle text attribute
-        if hasattr(result, 'text') and result.text is not None:
-            return result.text
-            
-        # Handle dictionary
-        if isinstance(result, dict):
-            for key in ("message", "output", "result", "text"):
-                if key in result:
-                    return str(result[key])
-            return json.dumps(result, indent=2)
-            
-        return str(result)
 
 class MCPTools:
     """Collection of tools from an MCP server, usable with DSPy agents.
@@ -162,16 +153,15 @@ class MCPTools:
     available in a format compatible with DSPy's agent frameworks like ReAct.
     """
     
-    def __init__(self, session: Any, tools_list: List[Any]):
+    def __init__(self, session: Any, tools_list: List[MCPToolType]):
         """Initialize the MCPTools collection.
         
         Args:
             session: MCP client session for making tool calls
-            tools_list: List of tool descriptions from MCP
+            tools_list: List of tool descriptions from MCP (MCPToolType objects, dicts, or JSON strings)
         """
         self.session = session
         self.tools = {MCPTool(tool, session).name: MCPTool(tool, session) for tool in tools_list}
-        logger.info(f"Initialized MCPTools with {len(self.tools)} tools: {', '.join(self.tools.keys())}")
     
     def __getitem__(self, tool_name: str) -> MCPTool:
         """Get a tool by name.
